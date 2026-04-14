@@ -1,13 +1,13 @@
 # CHARTER — fleet-agent-api
 
 ## Mission
-HTTP API for fleet agent communication and Ten Forward bridge.
+Part of the Cocapn fleet.
 
 ## Type
 vessel
 
 ## Captain
-Casey Digennaro
+Casey Digennaro (SuperInstance)
 
 ## Maintainer
-Oracle1
+Oracle1 (Lighthouse Keeper)
