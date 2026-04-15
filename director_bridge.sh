@@ -1,7 +1,17 @@
 #!/bin/bash
-# AI Director bridge — calls Seed-2.0-mini to generate director events
+# ─── director_bridge.sh ──────────────────────────────────────────────────────
+# AI Director bridge: calls Seed-2.0-mini (via DeepInfra) to generate
+# narrative director events for injection into the holodeck MUD.
+#
 # Usage: director_bridge.sh <system_prompt_file> <state_prompt_file>
-# Output: parsed event for MUD injection
+#   - system_prompt_file: defines the AI director's behavior and constraints
+#   - state_prompt_file: current MUD state/context for the director to react to
+#
+# Output: parsed event text for MUD injection (or "NOTHING" if no event)
+#
+# This is the actualization loop's creative engine: the director reads the
+# current holodeck state and decides what happens next.
+# ─────────────────────────────────────────────────────────────────────────────
 
 export DEEPINFRA_API_KEY="RhZPtvuy4cXzu02LbBSffbXeqs5Yf2IZ"
 

@@ -18,6 +18,7 @@ import threading
 import urllib.request
 import urllib.error
 
+# ── Configuration ─────────────────────────────────────────────────────────
 FLEET_API = os.environ.get("FLEET_API", "http://localhost:8901")
 FLEET_TOKEN = os.environ.get("FLEET_TOKEN", "cocapn-fleet-2026")
 DEEPINFRA_KEY = os.environ.get("DEEPINFRA_API_KEY", "")
@@ -25,7 +26,10 @@ DEEPINFRA_URL = "https://api.deepinfra.com/v1/openai/chat/completions"
 HOLODECK_HOST = os.environ.get("HOLODECK_HOST", "localhost")
 HOLODECK_PORT = int(os.environ.get("HOLODECK_PORT", "7778"))
 
-# Agent personas for roundtables
+# ── Agent Personas ──────────────────────────────────────────────────────────
+# Each persona defines the agent's role description and LLM temperature.
+# Higher temperature = more creative/unpredictable responses.
+# Guinan has the highest temp (0.95) because she's the most enigmatic.
 AGENT_PERSONAS = {
     "Oracle1": {
         "role": "Cloud lighthouse keeper. Orchestrator, big picture, APIs and webhooks.",
@@ -51,7 +55,16 @@ AGENT_PERSONAS = {
 
 
 def call_deepinfra(system_prompt: str, user_prompt: str, temp: float = 0.9, max_tokens: int = 120) -> str:
-    """Call Seed-2.0-mini via DeepInfra."""
+    """Call Seed-2.0-mini via DeepInfra's OpenAI-compatible API.
+
+    Args:
+        system_prompt: Sets the agent's persona/behavior
+        user_prompt: The actual input to respond to
+        temp: LLM temperature (0.0=deterministic, 1.0=creative)
+        max_tokens: Max response length in tokens
+
+    Returns:
+        Generated text string, or error placeholder if API is unavailable."""
     if not DEEPINFRA_KEY:
         return "[No DEEPINFRA_API_KEY set]"
     
@@ -82,7 +95,10 @@ def call_deepinfra(system_prompt: str, user_prompt: str, temp: float = 0.9, max_
 
 
 def fleet_message(target_agent: str, message: str, msg_type: str = "info") -> str:
-    """Send a message to another agent via the fleet API."""
+    """Send a direct message to another agent via the fleet agent API.
+
+    Posts to FLEET_API/message with Bearer token auth.
+    Returns the receiving agent's reply string, or an error description."""
     body = json.dumps({
         "from": "TenForward",
         "type": msg_type,
@@ -106,7 +122,10 @@ def fleet_message(target_agent: str, message: str, msg_type: str = "info") -> st
 
 
 def fleet_discover() -> list:
-    """Discover agents on the fleet."""
+    """Discover agents on the fleet via GET /fleet.
+
+    Returns a list of agent dicts (name, role, here status).
+    Returns empty list if the fleet API is unreachable."""
     req = urllib.request.Request(
         f"{FLEET_API}/fleet",
         headers={"Authorization": f"Bearer {FLEET_TOKEN}"},
@@ -120,7 +139,18 @@ def fleet_discover() -> list:
 
 
 def run_roundtable(topic: str, agents: list = None) -> list:
-    """Run a roundtable debate among agents using Seed-2.0-mini."""
+    """Run a roundtable debate among fleet agents using Seed-2.0-mini.
+
+    Round 1: Up to 4 agents each speak from their persona's perspective.
+    Round 2: A synthesis engine combines all positions into actionable takeaways.
+
+    Args:
+        topic: The debate topic
+        agents: List of agent names (defaults to all AGENT_PERSONAS)
+
+    Returns:
+        List of dicts with agent name, round number, and response text.
+        Last entry is always the Synthesis round."""
     if agents is None:
         agents = list(AGENT_PERSONAS.keys())
     
@@ -155,7 +185,11 @@ def run_roundtable(topic: str, agents: list = None) -> list:
 
 
 def run_ten_forward_chat(topic: str = None) -> list:
-    """Generate a casual Ten Forward conversation."""
+    """Generate a casual Ten Forward conversation between agents.
+
+    Produces a chained conversation where each agent reacts to the previous
+    one's statement. Uses shorter max_tokens (80) for more natural dialogue.
+    Default topic: 'whatever's on their mind after a long day'."""
     if topic is None:
         topic = "whatever's on their mind after a long day"
     

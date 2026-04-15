@@ -17,6 +17,9 @@ import time
 import urllib.request
 import urllib.error
 
+# ── Configuration ─────────────────────────────────────────────────────────
+# Connects to the holodeck MUD server and the lighthouse keeper.
+# Both are configurable via environment variables for different deployments.
 HOLODECK_HOST = os.environ.get("HOLODECK_HOST", "localhost")
 HOLODECK_PORT = int(os.environ.get("HOLODECK_PORT", "7778"))
 KEEPER_HOST = os.environ.get("KEEPER_HOST", "localhost")
@@ -24,7 +27,19 @@ KEEPER_PORT = int(os.environ.get("KEEPER_PORT", "8900"))
 
 
 def mud_command(name: str, *commands: str) -> str:
-    """Send commands to the holodeck MUD and get response."""
+    """Send commands to the holodeck MUD server and collect responses.
+
+    Connects via raw TCP socket, handles the MUD login flow
+    (welcome → vessel name prompt → room description), then sends
+    each command and collects output until the next prompt ("> ").
+    Closes the connection after sending 'quit'.
+
+    Args:
+        name: Vessel name to identify as in the MUD
+        *commands: One or more MUD commands to execute
+
+    Returns:
+        Concatenated response text, or error description on failure."""
     import socket
     
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -67,7 +82,10 @@ def mud_command(name: str, *commands: str) -> str:
 
 
 def keeper_status() -> dict:
-    """Get fleet status from the lighthouse keeper."""
+    """Get fleet status from the lighthouse keeper's /health endpoint.
+
+    Returns parsed JSON dict on success, or {'status': 'unreachable'}
+    if the keeper is down or the request times out (3s)."""
     try:
         req = urllib.request.Request(f"http://{KEEPER_HOST}:{KEEPER_PORT}/health")
         resp = urllib.request.urlopen(req, timeout=3)
@@ -77,7 +95,10 @@ def keeper_status() -> dict:
 
 
 def fleet_report() -> str:
-    """Generate a fleet status report."""
+    """Generate a human-readable fleet status report.
+
+    Formats the keeper's health data into a concise status line
+    showing version, tracked vessels, and total API calls."""
     status = keeper_status()
     if status.get("status") == "unreachable":
         return "⚠ Keeper unreachable"

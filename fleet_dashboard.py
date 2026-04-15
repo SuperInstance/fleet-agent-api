@@ -10,13 +10,20 @@ import sys
 import time
 import urllib.request
 
+# ── Configuration ─────────────────────────────────────────────────────────
+# GitHub token is optional but needed for the repos section of the dashboard.
+# FLEET_TOKEN must match the agent_api.py FLEET_TOKEN for authenticated queries.
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
-KEEPER = "http://localhost:8900"
-AGENT_API = "http://localhost:8901"
-FLEET_TOKEN = "cocapn-fleet-2026"
+KEEPER = "http://localhost:8900"      # lighthouse keeper health endpoint
+AGENT_API = "http://localhost:8901"   # fleet agent API base URL
+FLEET_TOKEN = "cocapn-fleet-2026"     # fleet auth token for API queries
 
 
 def fetch(url, token=None):
+    """Fetch JSON from a URL with optional Bearer token authentication.
+
+    Returns parsed JSON dict on success, None on any failure.
+    Used throughout the dashboard to query fleet services."""
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -29,6 +36,11 @@ def fetch(url, token=None):
 
 
 def repo_count():
+    """Count total GitHub repos for the authenticated user.
+
+    Uses the Link header's 'last' page reference for efficiency
+    instead of fetching all repos. Falls back to counting the
+    returned array if no pagination headers are present."""
     try:
         req = urllib.request.Request(
             "https://api.github.com/user/repos?per_page=1",
@@ -45,6 +57,14 @@ def repo_count():
 
 
 def dashboard():
+    """Print the complete fleet dashboard to stdout.
+
+    Queries four data sources:
+      1. Local service health checks (ports 8900, 8901, 7778, 9438)
+      2. Lighthouse keeper status
+      3. Fleet agent list via the agent API
+      4. GitHub repo count and recently active repos
+    """
     print("╔══════════════════════════════════════════════════╗")
     print("║        🔮 ORACLE1 FLEET DASHBOARD               ║")
     print("╚══════════════════════════════════════════════════╝")

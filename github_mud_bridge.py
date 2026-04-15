@@ -15,11 +15,14 @@ import sys
 import time
 import urllib.request
 
+# ── Configuration ─────────────────────────────────────────────────────────
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_API = "https://api.github.com"
 KEEPER_URL = os.environ.get("KEEPER_URL", "http://localhost:8900")
 
-# Fleet repos we care about
+# ── Fleet Repositories ─────────────────────────────────────────────────────
+# The set of repos scanned for recent activity. Each commit is classified
+# into a MUD event type (repair, construction, training, log, maintenance, duty).
 FLEET_REPOS = [
     "holodeck-rust", "holodeck-c", "holodeck-cuda", "holodeck-studio",
     "fleet-agent-api", "lighthouse-keeper", "flux-runtime",
@@ -30,7 +33,17 @@ FLEET_REPOS = [
 
 
 def get_recent_commits(repo: str, since: str = None, per_page: int = 5) -> list:
-    """Get recent commits from a SuperInstance repo."""
+    """Fetch recent commits from a SuperInstance GitHub repo.
+
+    Args:
+        repo: Repository name (e.g., 'holodeck-rust')
+        since: ISO timestamp to filter commits after this date
+        per_page: Number of commits to fetch (default 5)
+
+    Returns:
+        List of dicts with sha, message, author, date, and repo fields.
+        SHA is truncated to 7 chars for display. Messages capped at 80 chars.
+        Returns empty list on any API error (rate limit, auth, network)."""
     url = f"{GITHUB_API}/repos/SuperInstance/{repo}/commits?per_page={per_page}"
     if since:
         url += f"&since={since}"
@@ -58,7 +71,13 @@ def get_recent_commits(repo: str, since: str = None, per_page: int = 5) -> list:
 
 
 def get_fleet_activity() -> dict:
-    """Scan fleet repos for recent activity."""
+    """Scan all FLEET_REPOS for recent activity.
+
+    Fetches up to 3 commits per repo with a 0.2s delay between
+    requests to stay within GitHub API rate limits.
+
+    Returns:
+        Dict mapping repo name to list of commit dicts."""
     all_commits = {}
     
     for repo in FLEET_REPOS:
@@ -71,7 +90,17 @@ def get_fleet_activity() -> dict:
 
 
 def activity_to_mud_events(activity: dict) -> list:
-    """Convert GitHub activity to MUD events."""
+    """Convert GitHub activity into classified MUD events.
+
+    Each commit is classified by keyword matching in the message:
+      - repair: fix, bug, patch, hotfix
+      - construction: feat, add, new, build
+      - training: test, spec, verify
+      - log: doc, readme, comment
+      - maintenance: refactor, clean, reorg
+      - duty: everything else
+
+    Events are sorted newest-first by timestamp."""
     events = []
     
     for repo, commits in activity.items():
@@ -106,7 +135,10 @@ def activity_to_mud_events(activity: dict) -> list:
 
 
 def generate_activity_report(events: list) -> str:
-    """Generate a formatted activity report."""
+    """Generate a human-readable fleet activity report.
+
+    Shows total commit count, breakdown by event type with emoji,
+    and the 10 most recent events with repo, SHA, and message."""
     if not events:
         return "No recent fleet activity detected."
     

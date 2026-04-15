@@ -18,6 +18,8 @@ Endpoints:
   GET  /fleet       — who's out there (lighthouse only)
 """
 
+# ── Standard Library Imports ────────────────────────────────────────────────
+# No external dependencies required — fleet agents run on Python stdlib.
 import http.server
 import json
 import os
@@ -27,20 +29,28 @@ import time
 import threading
 from datetime import datetime, timezone
 
-FLEET_TOKEN = os.environ.get("FLEET_TOKEN", "changeme")
-AGENT_NAME = os.environ.get("AGENT_NAME", "Unknown")
-AGENT_ROLE = os.environ.get("AGENT_ROLE", "unknown")
-AGENT_VERSION = os.environ.get("AGENT_VERSION", "0.1.0")
-PORT = int(os.environ.get("AGENT_API_PORT", "8901"))
-KEEPER_URL = os.environ.get("KEEPER_URL", "")  # lighthouse keeper for registration
+# ── Configuration via Environment Variables ────────────────────────────────
+# All config is set via env vars so agents can boot from any clone without
+# touching code. Defaults are safe for local development only.
+FLEET_TOKEN = os.environ.get("FLEET_TOKEN", "changeme")       # shared auth token
+AGENT_NAME = os.environ.get("AGENT_NAME", "Unknown")          # identity
+AGENT_ROLE = os.environ.get("AGENT_ROLE", "unknown")          # fleet role (lighthouse, vessel, scout...)
+AGENT_VERSION = os.environ.get("AGENT_VERSION", "0.1.0")      # software version
+PORT = int(os.environ.get("AGENT_API_PORT", "8901"))          # HTTP listen port
+KEEPER_URL = os.environ.get("KEEPER_URL", "")                 # lighthouse keeper URL for registration
 
+# ── Runtime State ─────────────────────────────────────────────────────────
 START_TIME = time.time()
-MESSAGES = []  # recent messages
+MESSAGES = []  # in-memory message log (recent messages received via POST /message)
 CAPABILITIES = os.environ.get("AGENT_CAPABILITIES", "").split(",") if os.environ.get("AGENT_CAPABILITIES") else ["standard"]
 
 
 def get_local_ip():
-    """Get the local IP address."""
+    """Get the local IP address by opening a UDP socket to an external address.
+
+    This doesn't actually send data — it just determines which interface
+    would be used to reach 8.8.8.8, giving us the machine's LAN IP.
+    Falls back to 127.0.0.1 on failure."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -52,7 +62,11 @@ def get_local_ip():
 
 
 def check_auth(headers):
-    """Verify fleet token in Authorization header."""
+    """Verify fleet token in Authorization header.
+
+    Expects: Authorization: Bearer <fleet-token>
+    Returns True if the token matches FLEET_TOKEN, False otherwise.
+    Failed auth is handled by callers returning 401 responses."""
     auth = headers.get("Authorization", "")
     if auth.startswith("Bearer "):
         token = auth[7:]
@@ -61,7 +75,18 @@ def check_auth(headers):
 
 
 class AgentAPIHandler(http.server.BaseHTTPRequestHandler):
-    """The agent API — every agent serves these endpoints."""
+    """HTTP request handler implementing the standard fleet agent API.
+
+    Every agent in the fleet runs this same set of endpoints:
+      GET  /whoami      — identity and capabilities (public)
+      GET  /status      — health and workload (public)
+      GET  /health      — lightweight liveness probe (public)
+      GET  /bottles     — pending git-bottles (auth required)
+      GET  /fleet       — who's out there (auth required)
+      POST /message     — direct agent-to-agent message (auth required)
+      POST /register    — register another agent (auth required)
+      OPTIONS *         — CORS preflight handling
+    """
 
     def log_message(self, format, *args):
         ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -81,6 +106,7 @@ class AgentAPIHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
 
+        # ── /whoami: Public identity endpoint ──
         if path == "/whoami":
             self.send_json({
                 "name": AGENT_NAME,
@@ -93,8 +119,8 @@ class AgentAPIHandler(http.server.BaseHTTPRequestHandler):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
+        # ── /status: Detailed health and workload ──
         elif path == "/status":
-            # Collect system info
             try:
                 load = os.getloadavg()
             except Exception:
@@ -107,14 +133,14 @@ class AgentAPIHandler(http.server.BaseHTTPRequestHandler):
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
 
+        # ── /health: Lightweight liveness probe (no auth required) ──
         elif path == "/health":
-            # Lightweight health check (no auth required)
             self.send_json({"status": "ok", "agent": AGENT_NAME})
 
         elif path == "/bottles":
             if not check_auth(self.headers):
                 return self.send_error_json("Unauthorized", 401)
-            # Scan for bottles in vessel repo
+            # Scan ~/vessel/for-me for .md bottle files (git-based async mail)
             bottles = []
             bottle_dir = os.path.expanduser("~/vessel/for-me")
             if os.path.isdir(bottle_dir):
@@ -123,8 +149,8 @@ class AgentAPIHandler(http.server.BaseHTTPRequestHandler):
                         bottles.append({"file": f, "dir": bottle_dir})
             self.send_json({"for_me": bottles, "count": len(bottles)})
 
+        # ── /fleet: Fleet discovery (auth required) ──
         elif path == "/fleet":
-            # Discovery endpoint — if this agent knows about others
             if not check_auth(self.headers):
                 return self.send_error_json("Unauthorized", 401)
             # Query keeper if configured
@@ -145,6 +171,7 @@ class AgentAPIHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
 
+        # ── /message: Direct agent-to-agent message (auth required) ──
         if path == "/message":
             if not check_auth(self.headers):
                 return self.send_error_json("Unauthorized — wrong key", 401)
@@ -169,7 +196,8 @@ class AgentAPIHandler(http.server.BaseHTTPRequestHandler):
 
             print(f"📬 Message from {from_agent}: [{msg_type}] {text[:80]}")
 
-            # Auto-respond based on type
+            # Auto-respond based on message type — agents acknowledge receipt
+            # and provide type-appropriate responses without custom logic
             reply = f"Received, {from_agent}."
             if msg_type == "question":
                 reply = f"Got your question. Let me think about it."
@@ -178,8 +206,8 @@ class AgentAPIHandler(http.server.BaseHTTPRequestHandler):
 
             self.send_json({"received": True, "reply": reply})
 
+        # ── /register: Agent registration (auth required, lighthouse role) ──
         elif path == "/register":
-            # Another agent registering with us (lighthouse role)
             if not check_auth(self.headers):
                 return self.send_error_json("Unauthorized", 401)
             length = int(self.headers.get("Content-Length", 0))
@@ -191,6 +219,10 @@ class AgentAPIHandler(http.server.BaseHTTPRequestHandler):
             self.send_error_json(f"Unknown endpoint: {path}", 404)
 
     def do_OPTIONS(self):
+        """Handle CORS preflight requests.
+
+        Allows cross-origin requests from browsers and other agents.
+        All origins are permitted (fleet runs on trusted internal networks)."""
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -199,7 +231,11 @@ class AgentAPIHandler(http.server.BaseHTTPRequestHandler):
 
 
 def register_with_keeper():
-    """Register this agent with the lighthouse keeper."""
+    """Register this agent with the lighthouse keeper on startup.
+
+    Sends a POST to KEEPER_URL/register with our name, role, and API address.
+ Runs in a background thread so the HTTP server can start immediately.
+    Silently fails if the keeper is unreachable — agents work standalone."""
     if not KEEPER_URL:
         return
     try:
